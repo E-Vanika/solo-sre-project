@@ -53,32 +53,25 @@ jobs:
 
       - name: Configure OCI credentials
         env:
-          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
-          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-          OCI_REGION: ${{ secrets.OCI_REGION }}
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
 
         run: |
-          mkdir -p "$RUNNER_TEMP/.oci"
+          set -euo pipefail
 
-          printf '%s\n' "$OCI_PRIVATE_KEY" \
-            > "$RUNNER_TEMP/.oci/oci_api_key.pem"
+          mkdir -p "$RUNNER_TEMP/oci"
 
-          chmod 600 "$RUNNER_TEMP/.oci/oci_api_key.pem"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$RUNNER_TEMP/oci/oci_api_key.pem"
 
-          cat > "$RUNNER_TEMP/.oci/config" <<EOF
-          [DEFAULT]
-          user=$OCI_USER_OCID
-          fingerprint=$OCI_FINGERPRINT
-          tenancy=$OCI_TENANCY_OCID
-          region=$OCI_REGION
-          key_file=$RUNNER_TEMP/.oci/oci_api_key.pem
-          EOF
+          chmod 600 "$RUNNER_TEMP/oci/oci_api_key.pem"
 
-          chmod 600 "$RUNNER_TEMP/.oci/config"
+          echo "Checking OCI private key format..."
 
-          echo "OCI configuration created successfully."
+          head -n 1 "$RUNNER_TEMP/oci/oci_api_key.pem"
+          tail -n 1 "$RUNNER_TEMP/oci/oci_api_key.pem"
+
+          test -s "$RUNNER_TEMP/oci/oci_api_key.pem"
+
+          echo "OCI private key file created."
 
       - name: Terraform Init
         working-directory: ./playground-infrastructure-setup
@@ -90,12 +83,14 @@ jobs:
           OCI_REGION: ${{ secrets.OCI_REGION }}
 
         run: |
+          set -euo pipefail
+
           terraform init \
             -input=false \
             -backend-config="tenancy_ocid=${OCI_TENANCY_OCID}" \
             -backend-config="user_ocid=${OCI_USER_OCID}" \
             -backend-config="fingerprint=${OCI_FINGERPRINT}" \
-            -backend-config="private_key_path=${RUNNER_TEMP}/.oci/oci_api_key.pem" \
+            -backend-config="private_key_path=${RUNNER_TEMP}/oci/oci_api_key.pem" \
             -backend-config="region=${OCI_REGION}"
 
       # ======================================================
