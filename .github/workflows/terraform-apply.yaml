@@ -47,8 +47,6 @@ jobs:
         env:
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
         run: |
-          mkdir -p "$HOME/.oci"
-
           printf '%s\n' "$OCI_PRIVATE_KEY" \
             > "$HOME/.oci/oci_api_key.pem"
 

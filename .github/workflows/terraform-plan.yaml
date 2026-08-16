@@ -51,39 +51,52 @@ jobs:
         working-directory: ./playground-infrastructure-setup
         run: terraform fmt -check -recursive
 
-      # ======================================================
-      # CREATE OCI PRIVATE KEY
-      # ======================================================
-
       - name: Configure OCI credentials
         env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
 
         run: |
-          mkdir -p "$HOME/.oci"
+          mkdir -p "$RUNNER_TEMP/.oci"
 
           printf '%s\n' "$OCI_PRIVATE_KEY" \
-            > "$HOME/.oci/oci_api_key.pem"
+            > "$RUNNER_TEMP/.oci/oci_api_key.pem"
 
-          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$RUNNER_TEMP/.oci/oci_api_key.pem"
 
-      # ======================================================
-      # TERRAFORM INIT
-      # ======================================================
+          cat > "$RUNNER_TEMP/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$RUNNER_TEMP/.oci/oci_api_key.pem
+          EOF
+
+          chmod 600 "$RUNNER_TEMP/.oci/config"
+
+          echo "OCI configuration created successfully."
 
       - name: Terraform Init
         working-directory: ./playground-infrastructure-setup
 
         env:
-          TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_path: ${{ github.workspace }}/../.oci/oci_api_key.pem
-          TF_VAR_region: ${{ secrets.OCI_REGION }}
-          TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
 
         run: |
-          terraform init -input=false
+          terraform init \
+            -input=false \
+            -backend-config="tenancy_ocid=${OCI_TENANCY_OCID}" \
+            -backend-config="user_ocid=${OCI_USER_OCID}" \
+            -backend-config="fingerprint=${OCI_FINGERPRINT}" \
+            -backend-config="private_key_path=${RUNNER_TEMP}/.oci/oci_api_key.pem" \
+            -backend-config="region=${OCI_REGION}"
 
       # ======================================================
       # TERRAFORM VALIDATE
@@ -113,7 +126,7 @@ jobs:
           TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_path: ${{ github.workspace }}/../.oci/oci_api_key.pem
+          TF_VAR_private_key_path: ${{ runner.temp }}/.oci/oci_api_key.pem
           TF_VAR_region: ${{ secrets.OCI_REGION }}
           TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
           TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
