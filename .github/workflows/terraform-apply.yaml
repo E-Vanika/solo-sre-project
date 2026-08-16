@@ -82,6 +82,7 @@ jobs:
           TF_VAR_region: ${{ secrets.OCI_REGION }}
           TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
           TF_VAR_allowed_ssh_cidr: ${{ secrets.ALLOWED_SSH_CIDR }}
+        shell: bash
         run: |
           printf '%s\n' '${{ secrets.OCI_PRIVATE_KEY }}' \
             > "$RUNNER_TEMP/oci_api_key.pem"

@@ -51,47 +51,35 @@ jobs:
         working-directory: ./playground-infrastructure-setup
         run: terraform fmt -check -recursive
 
-      - name: Configure OCI credentials
-        env:
-          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
-
+      - name: Create temporary OCI private key
+        shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p "$RUNNER_TEMP/oci"
+          printf '%s\n' "${{ secrets.OCI_PRIVATE_KEY }}" \
+            > "${{ runner.temp }}/oci_api_key.pem"
 
-          printf '%s\n' "$OCI_PRIVATE_KEY" > "$RUNNER_TEMP/oci/oci_api_key.pem"
-
-          chmod 600 "$RUNNER_TEMP/oci/oci_api_key.pem"
-
-          echo "Checking OCI private key format..."
-
-          head -n 1 "$RUNNER_TEMP/oci/oci_api_key.pem"
-          tail -n 1 "$RUNNER_TEMP/oci/oci_api_key.pem"
-
-          test -s "$RUNNER_TEMP/oci/oci_api_key.pem"
-
-          echo "OCI private key file created."
-
-      - name: Terraform Init
+          chmod 600 "${{ runner.temp }}/oci_api_key.pem"
+      - name: Terraform Init - Remote OCI State
         working-directory: ./playground-infrastructure-setup
 
         env:
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
           OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
           OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY_PATH: ${{ runner.temp }}/oci_api_key.pem
           OCI_REGION: ${{ secrets.OCI_REGION }}
+
+        shell: bash
 
         run: |
           set -euo pipefail
 
-          terraform init \
-            -input=false \
+          terraform init -upgrade \
             -backend-config="tenancy_ocid=${OCI_TENANCY_OCID}" \
             -backend-config="user_ocid=${OCI_USER_OCID}" \
             -backend-config="fingerprint=${OCI_FINGERPRINT}" \
-            -backend-config="private_key_path=${RUNNER_TEMP}/oci/oci_api_key.pem" \
-            -backend-config="region=${OCI_REGION}"
+            -backend-config="private_key_path=${OCI_PRIVATE_KEY_PATH}"
 
       # ======================================================
       # TERRAFORM VALIDATE
@@ -121,13 +109,17 @@ jobs:
           TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_path: ${{ runner.temp }}/.oci/oci_api_key.pem
+          TF_VAR_private_key_path: ${{ runner.temp }}/oci_api_key.pem
           TF_VAR_region: ${{ secrets.OCI_REGION }}
           TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
           TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
           TF_VAR_allowed_ssh_cidr: ${{ secrets.ALLOWED_SSH_CIDR }}
 
+        shell: bash
+
         run: |
+          set -euo pipefail
+
           terraform plan \
             -input=false \
             -out=tfplan
