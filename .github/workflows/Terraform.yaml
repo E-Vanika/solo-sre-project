@@ -135,3 +135,130 @@ jobs:
           name: terraform-plan-${{ github.sha }}
           path: ./playground-infrastructure-setup/tfplan
           retention-days: 7
+  # ============================================================
+  # TERRAFORM APPLY
+  # ============================================================
+
+  terraform-apply:
+
+    name: Terraform Apply
+
+    needs:
+      - terraform-plan
+
+    runs-on: ubuntu-latest
+
+    # ==========================================================
+    # GITHUB ENVIRONMENT
+    #
+    # Required reviewers configured in:
+    #
+    # Repository
+    #   → Settings
+    #   → Environments
+    #   → terraform-apply
+    #
+    # ==========================================================
+
+    environment:
+      name: terraform-production
+
+    permissions:
+      contents: read
+
+    env:
+      TF_IN_AUTOMATION: true
+      TF_INPUT: false
+
+      TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+      TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
+      TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+      TF_VAR_private_key_path: ${{ runner.temp }}/oci_api_key.pem
+      TF_VAR_region: ${{ secrets.OCI_REGION }}
+      TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_allowed_ssh_cidr: ${{ secrets.ALLOWED_SSH_CIDR }}
+
+    steps:
+
+      # ========================================================
+      # CHECKOUT
+      # ========================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ========================================================
+      # TERRAFORM
+      # ========================================================
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.1
+
+      # ========================================================
+      # OCI PRIVATE KEY
+      # ========================================================
+
+      - name: Create temporary OCI private key
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' "${{ secrets.OCI_PRIVATE_KEY }}" \
+            > "${{ runner.temp }}/oci_api_key.pem"
+
+          chmod 600 "${{ runner.temp }}/oci_api_key.pem"
+
+      # ========================================================
+      # TERRAFORM INIT
+      # ========================================================
+
+      - name: Terraform Init
+        working-directory: ./playground-infrastructure-setup
+
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY_PATH: ${{ runner.temp }}/oci_api_key.pem
+
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -input=false \
+            -backend-config="tenancy_ocid=${OCI_TENANCY_OCID}" \
+            -backend-config="user_ocid=${OCI_USER_OCID}" \
+            -backend-config="fingerprint=${OCI_FINGERPRINT}" \
+            -backend-config="private_key_path=${OCI_PRIVATE_KEY_PATH}"
+
+      # ========================================================
+      # DOWNLOAD THE EXACT PLAN GENERATED EARLIER
+      # ========================================================
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ github.sha }}
+          path: ./playground-infrastructure-setup
+
+      # ========================================================
+      # APPLY
+      # ========================================================
+
+      - name: Terraform Apply
+        working-directory: ./playground-infrastructure-setup
+
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            tfplan
