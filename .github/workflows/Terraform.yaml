@@ -1,4 +1,4 @@
-name: Terraform Plan
+name: Terraform Plan and Apply
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: terraform-plan-${{ github.event.pull_request.number || github.ref }}
+  group: terraform-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -20,6 +20,10 @@ env:
   TF_INPUT: false
 
 jobs:
+
+  # ============================================================
+  # TERRAFORM PLAN
+  # ============================================================
 
   terraform-plan:
 
@@ -29,27 +33,33 @@ jobs:
 
     steps:
 
-      # ======================================================
+      # ========================================================
       # CHECKOUT
-      # ======================================================
+      # ========================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ======================================================
+      # ========================================================
       # TERRAFORM
-      # ======================================================
+      # ========================================================
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.1
 
-      # ======================================================
+      # ========================================================
       # TERRAFORM FORMAT
-      # ======================================================
+      # ========================================================
 
       - name: Terraform Format Check
         working-directory: ./playground-infrastructure-setup
         run: terraform fmt -check -recursive
+
+      # ========================================================
+      # OCI PRIVATE KEY
+      # ========================================================
 
       - name: Create temporary OCI private key
         shell: bash
@@ -60,6 +70,11 @@ jobs:
             > "${{ runner.temp }}/oci_api_key.pem"
 
           chmod 600 "${{ runner.temp }}/oci_api_key.pem"
+
+      # ========================================================
+      # TERRAFORM INIT
+      # ========================================================
+
       - name: Terraform Init - Remote OCI State
         working-directory: ./playground-infrastructure-setup
 
@@ -68,7 +83,6 @@ jobs:
           OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
           OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
           OCI_PRIVATE_KEY_PATH: ${{ runner.temp }}/oci_api_key.pem
-          OCI_REGION: ${{ secrets.OCI_REGION }}
 
         shell: bash
 
@@ -81,26 +95,27 @@ jobs:
             -backend-config="fingerprint=${OCI_FINGERPRINT}" \
             -backend-config="private_key_path=${OCI_PRIVATE_KEY_PATH}"
 
-      # ======================================================
+      # ========================================================
       # TERRAFORM VALIDATE
-      # ======================================================
+      # ========================================================
 
       - name: Terraform Validate
         working-directory: ./playground-infrastructure-setup
+
         env:
           TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_path: ${{ github.workspace }}/../.oci/oci_api_key.pem
+          TF_VAR_private_key_path: ${{ runner.temp }}/oci_api_key.pem
           TF_VAR_region: ${{ secrets.OCI_REGION }}
           TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
 
         run: |
           terraform validate
 
-      # ======================================================
+      # ========================================================
       # TERRAFORM PLAN
-      # ======================================================
+      # ========================================================
 
       - name: Terraform Plan
         working-directory: ./playground-infrastructure-setup
@@ -124,9 +139,9 @@ jobs:
             -input=false \
             -out=tfplan
 
-      # ======================================================
-      # UPLOAD PLAN
-      # ======================================================
+      # ========================================================
+      # UPLOAD EXACT PLAN
+      # ========================================================
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
@@ -135,6 +150,8 @@ jobs:
           name: terraform-plan-${{ github.sha }}
           path: ./playground-infrastructure-setup/tfplan
           retention-days: 7
+
+
   # ============================================================
   # TERRAFORM APPLY
   # ============================================================
@@ -149,14 +166,14 @@ jobs:
     runs-on: ubuntu-latest
 
     # ==========================================================
-    # GITHUB ENVIRONMENT
+    # APPROVAL GATE
     #
-    # Required reviewers configured in:
+    # Configure required reviewers in:
     #
     # Repository
-    #   → Settings
-    #   → Environments
-    #   → terraform-apply
+    # → Settings
+    # → Environments
+    # → terraform-production
     #
     # ==========================================================
 
@@ -173,7 +190,6 @@ jobs:
       TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
       TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
       TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-      TF_VAR_private_key_path: ${{ runner.temp }}/oci_api_key.pem
       TF_VAR_region: ${{ secrets.OCI_REGION }}
       TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
@@ -215,7 +231,7 @@ jobs:
       # TERRAFORM INIT
       # ========================================================
 
-      - name: Terraform Init
+      - name: Terraform Init - Remote OCI State
         working-directory: ./playground-infrastructure-setup
 
         env:
@@ -237,17 +253,18 @@ jobs:
             -backend-config="private_key_path=${OCI_PRIVATE_KEY_PATH}"
 
       # ========================================================
-      # DOWNLOAD THE EXACT PLAN GENERATED EARLIER
+      # DOWNLOAD EXACT PLAN
       # ========================================================
 
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
+
         with:
           name: terraform-plan-${{ github.sha }}
           path: ./playground-infrastructure-setup
 
       # ========================================================
-      # APPLY
+      # TERRAFORM APPLY
       # ========================================================
 
       - name: Terraform Apply
