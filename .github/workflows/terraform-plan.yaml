@@ -22,93 +22,116 @@ env:
 jobs:
 
   terraform-plan:
+
     name: Terraform Plan
+
     runs-on: ubuntu-latest
 
     steps:
 
-      # ------------------------------------------------------
-      # Checkout
-      # ------------------------------------------------------
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------
-      # Terraform
-      # ------------------------------------------------------
+      # ======================================================
+      # TERRAFORM
+      # ======================================================
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # ------------------------------------------------------
-      # Terraform Format
-      # ------------------------------------------------------
+      # ======================================================
+      # TERRAFORM FORMAT
+      # ======================================================
 
       - name: Terraform Format Check
         working-directory: ./playground-infrastructure-setup
         run: terraform fmt -check -recursive
 
-      # ------------------------------------------------------
-      # Terraform Init
-      # ------------------------------------------------------
+      # ======================================================
+      # CREATE OCI PRIVATE KEY
+      # ======================================================
 
-      - name: Terraform Init
-        working-directory: ./playground-infrastructure-setup
+      - name: Configure OCI credentials
         env:
-          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
-          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
-          OCI_REGION: ${{ secrets.OCI_REGION }}
 
         run: |
           mkdir -p "$HOME/.oci"
 
-          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          printf '%s\n' "$OCI_PRIVATE_KEY" \
+            > "$HOME/.oci/oci_api_key.pem"
+
           chmod 600 "$HOME/.oci/oci_api_key.pem"
 
-          terraform init
+      # ======================================================
+      # TERRAFORM INIT
+      # ======================================================
 
-      # ------------------------------------------------------
-      # Terraform Validate
-      # ------------------------------------------------------
+      - name: Terraform Init
+        working-directory: ./playground-infrastructure-setup
+
+        env:
+          TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_path: ${{ github.workspace }}/../.oci/oci_api_key.pem
+          TF_VAR_region: ${{ secrets.OCI_REGION }}
+          TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
+
+        run: |
+          terraform init -input=false
+
+      # ======================================================
+      # TERRAFORM VALIDATE
+      # ======================================================
 
       - name: Terraform Validate
-        working-directory: ./playground-infrastructure-setup
-        run: terraform validate
-
-      # ------------------------------------------------------
-      # Terraform Plan
-      # ------------------------------------------------------
-
-      - name: Terraform Plan
         working-directory: ./playground-infrastructure-setup
         env:
           TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_path: ${{ runner.temp }}/oci_api_key.pem
+          TF_VAR_private_key_path: ${{ github.workspace }}/../.oci/oci_api_key.pem
           TF_VAR_region: ${{ secrets.OCI_REGION }}
+          TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
+
+        run: |
+          terraform validate
+
+      # ======================================================
+      # TERRAFORM PLAN
+      # ======================================================
+
+      - name: Terraform Plan
+        working-directory: ./playground-infrastructure-setup
+
+        env:
+          TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_path: ${{ github.workspace }}/../.oci/oci_api_key.pem
+          TF_VAR_region: ${{ secrets.OCI_REGION }}
+          TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
           TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
           TF_VAR_allowed_ssh_cidr: ${{ secrets.ALLOWED_SSH_CIDR }}
+
         run: |
-          printf '%s\n' '${{ secrets.OCI_PRIVATE_KEY }}' \
-            > "$RUNNER_TEMP/oci_api_key.pem"
-
-          chmod 600 "$RUNNER_TEMP/oci_api_key.pem"
-
           terraform plan \
-            -out=tfplan \
-            -input=false
+            -input=false \
+            -out=tfplan
 
-      # ------------------------------------------------------
-      # Save Plan
-      # ------------------------------------------------------
+      # ======================================================
+      # UPLOAD PLAN
+      # ======================================================
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
+
         with:
           name: terraform-plan-${{ github.sha }}
-          path: terraform/tfplan
+          path: ./playground-infrastructure-setup/tfplan
           retention-days: 7
