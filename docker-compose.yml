@@ -7,7 +7,7 @@
 
 services:
   app:
-    image: ghcr.io/${GHCR_OWNER}/solo-sre-app:${IMAGE_TAG:-latest}
+    image: ghcr.io/${GHCR_OWNER}/cloud-playground:${IMAGE_TAG:-latest}
     container_name: app
     restart: unless-stopped
     mem_limit: 150m
@@ -47,7 +47,8 @@ services:
     mem_limit: 30m
     command:
       - '--path.rootfs=/host'
-    network_mode: host
+    networks:
+      - internal
     pid: host
     volumes:
       - /:/host:ro,rslave
@@ -61,7 +62,10 @@ services:
     container_name: vmagent
     restart: unless-stopped
     mem_limit: 60m
-    network_mode: host
+    networks:
+      - internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./vmagent/scrape.yml:/etc/vmagent/scrape.yml
       - vmagent_data:/vmagentdata
