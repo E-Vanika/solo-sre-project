@@ -5,9 +5,7 @@ to alert on, chase in a runbook, and write a postmortem about.
 """
 import random
 import time
-
 from fastapi import FastAPI, Response
-
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 
