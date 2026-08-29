@@ -13,10 +13,15 @@
     swap_size_gb: 4
 
   tasks:
+    - name: Wait for cloud-init to finish first-boot tasks
+      command: cloud-init status --wait
+      changed_when: false
+
     - name: Update apt cache
       apt:
         update_cache: true
         cache_valid_time: 3600
+        lock_timeout: 300
 
     - name: Upgrade all packages
       apt:
@@ -33,16 +38,30 @@
         state: present
 
     # --------------------------------------------------------------
-    # Docker
+    # Docker (deb822 format - apt_key/apt_repository are deprecated
+    # and slated for removal in ansible-core 2.25)
     # --------------------------------------------------------------
-    - name: Add Docker GPG key
-      apt_key:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        state: present
+    - name: Ensure /etc/apt/keyrings exists
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
 
-    - name: Add Docker apt repo
-      apt_repository:
-        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    - name: Download Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Add Docker apt source (deb822)
+      deb822_repository:
+        name: docker
+        types: deb
+        uris: https://download.docker.com/linux/ubuntu
+        suites: "{{ ansible_distribution_release }}"
+        components: stable
+        architectures: amd64
+        signed_by: /etc/apt/keyrings/docker.asc
         state: present
 
     - name: Install Docker Engine + compose plugin
