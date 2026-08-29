@@ -20,7 +20,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
             set -e
-            cd /opt/solo-sre
+            cd /opt/sre-portfolio
 
             # remember last-known-good tag for rollback
             CURRENT=$(grep '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2 || echo "latest")
