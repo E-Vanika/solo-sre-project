@@ -1,0 +1,164 @@
+---
+# Bootstraps a fresh Ubuntu 24.04 e2.micro for the SRE demo stack.
+# Run once after `terraform apply`, before the first CD deploy.
+#
+#   ansible-playbook -i inventory.ini playbook.yml
+
+- name: Bootstrap e2.micro for SRE demo stack
+  hosts: vm
+  become: true
+
+  vars:
+    app_dir: /opt/solo-sre
+    swap_size_gb: 4
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+
+    - name: Install base packages
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - ufw
+          - unattended-upgrades
+        state: present
+
+    # --------------------------------------------------------------
+    # Docker
+    # --------------------------------------------------------------
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker apt repo
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker Engine + compose plugin
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Enable and start docker
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    # --------------------------------------------------------------
+    # Swap - e2.micro ships with no swap by default. On 1GB RAM this
+    # is a deliberate reliability decision, not an optional extra:
+    # without it, any memory spike gets OOM-killed instead of
+    # gracefully degrading.
+    # --------------------------------------------------------------
+    - name: Check if swapfile already exists
+      stat:
+        path: /swapfile
+      register: swapfile_stat
+
+    - name: Create swapfile
+      command: fallocate -l {{ swap_size_gb }}G /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Set swapfile permissions
+      file:
+        path: /swapfile
+        mode: '0600'
+      when: not swapfile_stat.stat.exists
+
+    - name: Format swapfile
+      command: mkswap /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Enable swapfile
+      command: swapon /swapfile
+      when: not swapfile_stat.stat.exists
+
+    - name: Persist swapfile in fstab
+      mount:
+        path: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+
+    - name: Tune swappiness for a server workload (avoid over-eager swapping)
+      sysctl:
+        name: vm.swappiness
+        value: "10"
+        state: present
+
+    # --------------------------------------------------------------
+    # Firewall (defense in depth - OCI NSG is layer 1, UFW is layer 2)
+    # --------------------------------------------------------------
+    - name: Set UFW default deny incoming
+      ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Set UFW default allow outgoing
+      ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Allow SSH
+      ufw:
+        rule: limit
+        port: "22"
+        proto: tcp
+
+    - name: Allow HTTP
+      ufw:
+        rule: allow
+        port: "80"
+        proto: tcp
+
+    - name: Allow HTTPS
+      ufw:
+        rule: allow
+        port: "443"
+        proto: tcp
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    # --------------------------------------------------------------
+    # App directory
+    # --------------------------------------------------------------
+    - name: Create app directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Enable unattended security upgrades
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";

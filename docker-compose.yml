@@ -1,0 +1,81 @@
+# Runs entirely on the e2.micro. Memory limits are deliberate -
+# total budget kept under ~500MB to leave headroom for the OS,
+# SSH, and swap on a 1GB instance.
+#
+# CURRENT_IMAGE_TAG is written by the CD pipeline / rollback script
+# to control exactly which image version is running.
+
+services:
+  app:
+    image: ghcr.io/${GHCR_OWNER}/solo-sre-app:${IMAGE_TAG:-latest}
+    container_name: app
+    restart: unless-stopped
+    mem_limit: 150m
+    memswap_limit: 300m
+    expose:
+      - "8000"
+    networks:
+      - internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    # build: ./caddy   # use this locally / in CI to get the rate-limit plugin
+    image: caddy:2-alpine   # swap for your custom-built + pushed image once ready
+    container_name: caddy
+    restart: unless-stopped
+    mem_limit: 60m
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+    depends_on:
+      - app
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    mem_limit: 30m
+    command:
+      - '--path.rootfs=/host'
+    network_mode: host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+
+  # vmagent scrapes local targets (app + node-exporter) and remote_writes
+  # to a free-tier hosted metrics backend (Grafana Cloud / VictoriaMetrics
+  # Cloud free tier). This is the key resource-budget decision: we do NOT
+  # run Prometheus + Grafana locally - storage and dashboards live off-box.
+  vmagent:
+    image: victoriametrics/vmagent:latest
+    container_name: vmagent
+    restart: unless-stopped
+    mem_limit: 60m
+    network_mode: host
+    volumes:
+      - ./vmagent/scrape.yml:/etc/vmagent/scrape.yml
+      - vmagent_data:/vmagentdata
+    command:
+      - '--promscrape.config=/etc/vmagent/scrape.yml'
+      - '--remoteWrite.url=${REMOTE_WRITE_URL}'
+      - '--remoteWrite.basicAuth.username=${REMOTE_WRITE_USER}'
+      - '--remoteWrite.basicAuth.password=${REMOTE_WRITE_PASSWORD}'
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  vmagent_data:

@@ -54,7 +54,7 @@ jobs:
       # ========================================================
 
       - name: Terraform Format Check
-        working-directory: ./playground-infrastructure-setup
+        working-directory: ./Terraform
         run: terraform fmt -check -recursive
 
       # ========================================================
@@ -76,7 +76,7 @@ jobs:
       # ========================================================
 
       - name: Terraform Init - Remote OCI State
-        working-directory: ./playground-infrastructure-setup
+        working-directory: ./Terraform
 
         env:
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
@@ -100,7 +100,7 @@ jobs:
       # ========================================================
 
       - name: Terraform Validate
-        working-directory: ./playground-infrastructure-setup
+        working-directory: ./Terraform
 
         env:
           TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
@@ -118,7 +118,7 @@ jobs:
       # ========================================================
 
       - name: Terraform Plan
-        working-directory: ./playground-infrastructure-setup
+        working-directory: ./Terraform
 
         env:
           TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
@@ -148,7 +148,7 @@ jobs:
 
         with:
           name: terraform-plan-${{ github.sha }}
-          path: ./playground-infrastructure-setup/tfplan
+          path: ./Terraform/tfplan
           retention-days: 7
 
 
@@ -232,7 +232,7 @@ jobs:
       # ========================================================
 
       - name: Terraform Init - Remote OCI State
-        working-directory: ./playground-infrastructure-setup
+        working-directory: ./Terraform
 
         env:
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
@@ -261,14 +261,14 @@ jobs:
 
         with:
           name: terraform-plan-${{ github.sha }}
-          path: ./playground-infrastructure-setup
+          path: ./Terraform
 
       # ========================================================
       # TERRAFORM APPLY
       # ========================================================
 
       - name: Terraform Apply
-        working-directory: ./playground-infrastructure-setup
+        working-directory: ./Terraform
 
         shell: bash
 

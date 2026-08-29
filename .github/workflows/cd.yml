@@ -1,0 +1,43 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy new image to VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ubuntu
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/solo-sre
+
+            # remember last-known-good tag for rollback
+            CURRENT=$(grep '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2 || echo "latest")
+            echo "$CURRENT" > .last_good_tag
+
+            NEW_TAG="${{ github.sha }}"
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$NEW_TAG/" .env || echo "IMAGE_TAG=$NEW_TAG" >> .env
+
+            docker compose pull app
+            docker compose up -d --no-deps app
+
+            # health check with automatic rollback
+            sleep 5
+            if ! curl -fsS http://localhost:8000/health; then
+              echo "Health check failed, rolling back to $CURRENT"
+              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$CURRENT/" .env
+              docker compose pull app
+              docker compose up -d --no-deps app
+              exit 1
+            fi
+            echo "Deploy of $NEW_TAG succeeded"

@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: "app"
+    static_configs:
+      - targets: ["localhost:8000"]
+        labels:
+          service: "solo-sre-app"
+
+  - job_name: "node"
+    static_configs:
+      - targets: ["localhost:9100"]
+        labels:
+          service: "host"

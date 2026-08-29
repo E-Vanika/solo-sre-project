@@ -1,0 +1,91 @@
+{
+    # global options
+    # non-standard plugin directives need an explicit order
+    order rate_limit before basic_auth
+}
+
+your-domain.example.com {
+    encode gzip
+
+    # ------------------------------------------------------------
+    # RATE LIMITING (needs the custom-built caddy image - see Dockerfile)
+    # 20 requests / 10s per client IP, applied to everything.
+    # ------------------------------------------------------------
+    rate_limit {
+        zone dynamic {
+            key    {http.request.remote_ip}
+            events 20
+            window 10s
+        }
+    }
+
+    # ------------------------------------------------------------
+    # PATH-BASED ROUTING + AUTHENTICATION/AUTHORIZATION
+    # /metrics is internal-only data - protect it with basic auth
+    # (generate the hash with: docker run caddy caddy hash-password)
+    # ------------------------------------------------------------
+    handle_path /metrics* {
+        basic_auth {
+            monitor $2a$14$REPLACE_WITH_HASHED_PASSWORD
+        }
+        reverse_proxy app:8000
+    }
+
+    # everything else - public
+    handle {
+        reverse_proxy app:8000 {
+            # ----------------------------------------------------
+            # CIRCUIT BREAKING (approximation)
+            # Caddy has no true half-open-state breaker like
+            # Envoy/Istio, but passive health checks give you the
+            # same practical effect: after 3 failures, stop sending
+            # this upstream traffic for 30s, then retry it.
+            # ----------------------------------------------------
+            fail_duration 30s
+            max_fails 3
+            unhealthy_status 5xx
+        }
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer-when-downgrade"
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+
+# ------------------------------------------------------------
+# CANARY DEPLOYMENT EXAMPLE (commented out - enable when you have
+# two image tags running as separate services, e.g. "app" (stable)
+# and "app-canary" (new release) in docker-compose.yml)
+# ------------------------------------------------------------
+# your-domain.example.com {
+#     reverse_proxy app:8000 app-canary:8000 {
+#         lb_policy weighted 9 1   # 90% stable, 10% canary
+#     }
+# }
+
+# ------------------------------------------------------------
+# mTLS EXAMPLE (commented out - for service-to-service auth once
+# you have more than one internal service calling this one)
+# ------------------------------------------------------------
+# internal-api.example.com {
+#     tls /path/to/server-cert.pem /path/to/server-key.pem {
+#         client_auth {
+#             mode require_and_verify
+#             trusted_ca_cert_file /path/to/ca.pem
+#         }
+#     }
+#     reverse_proxy app:8000
+# }
+
+# Fallback for bare-IP access during setup/testing (HTTP only, no TLS)
+:80 {
+    reverse_proxy app:8000
+}
