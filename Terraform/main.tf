@@ -166,7 +166,13 @@ resource "oci_core_security_list" "e2_micro_security_list" {
   #
   # OCI default egress behavior is retained.
   # ----------------------------------------------------------
+  egress_security_rules {
+    protocol = "all"
 
+    destination = "0.0.0.0/0"
+
+    description = "Allow all outbound traffic"
+  }
   freeform_tags = {
     ManagedBy = "Terraform"
   }
