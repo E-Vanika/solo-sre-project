@@ -32,10 +32,28 @@ jobs:
             docker compose pull app
             docker compose up -d --no-deps app
 
-            # health check with automatic rollback
-            sleep 5
-            if ! curl -fsS http://localhost:8000/health; then
-              echo "Health check failed, rolling back to $CURRENT"
+            # Health check through Caddy (port 80), not the app
+            # container directly - "app" has no host port mapping by
+            # design (only reachable from other containers on the
+            # "internal" Docker network), so localhost:8000 on the VM
+            # itself was never reachable. Checking through Caddy also
+            # exercises the real path a user actually takes.
+            #
+            # Retry loop instead of one fixed sleep - a freshly
+            # recreated container needs a moment for uvicorn to bind,
+            # and a single 5s guess is fragile.
+            HEALTHY=false
+            for i in 1 2 3 4 5; do
+              sleep 3
+              if curl -fsS http://localhost/health; then
+                HEALTHY=true
+                break
+              fi
+              echo "Health check attempt $i failed, retrying..."
+            done
+
+            if [ "$HEALTHY" != "true" ]; then
+              echo "Health check failed after retries, rolling back to $CURRENT"
               sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$CURRENT/" .env
               docker compose pull app
               docker compose up -d --no-deps app
