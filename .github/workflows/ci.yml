@@ -82,9 +82,12 @@ jobs:
       - name: Build image
         run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.IMAGE_NAME }}:latest app
 
+<<<<<<< HEAD
       - name: Build greeting-service image
         run: docker build -t ${{ env.IMAGE_NAME }}-greeting:${{ github.sha }} -t ${{ env.IMAGE_NAME }}-greeting:latest app/greeting_service
 
+=======
+>>>>>>> ac0b49b86f947dfdd32af6f30034625c4b5e7cf1
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -92,16 +95,27 @@ jobs:
           format: sarif
           output: trivy-image.sarif
           severity: HIGH,CRITICAL
+<<<<<<< HEAD
           exit-code: "0"
+=======
+          exit-code: "0"   # report but don't block; set to "1" once you trust it
+>>>>>>> ac0b49b86f947dfdd32af6f30034625c4b5e7cf1
 
       - name: Upload Trivy image results
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-image.sarif
 
+<<<<<<< HEAD
       - name: Push images
         run: |
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.IMAGE_NAME }}-greeting:${{ github.sha }}
           docker push ${{ env.IMAGE_NAME }}-greeting:latest
+=======
+      - name: Push image
+        run: |
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.IMAGE_NAME }}:latest
+>>>>>>> ac0b49b86f947dfdd32af6f30034625c4b5e7cf1
