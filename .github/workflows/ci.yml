@@ -75,7 +75,7 @@ jobs:
 
   build-and-push:
     needs: test-and-scan
-    # if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,18 +86,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Set image name
-        run: |
-          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-      
+
       - name: Build image
-        run: |
-          docker build \
-            -t "$IMAGE_NAME:${GITHUB_SHA}" \
-            -t "$IMAGE_NAME:latest" \
-            app
-      
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.IMAGE_NAME }}:latest app
+
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
@@ -105,7 +97,6 @@ jobs:
           format: sarif
           output: trivy-image.sarif
           severity: HIGH,CRITICAL
-<<<<<<< HEAD
           exit-code: "0"   # report but don't block; set to "1" once you trust it
 
       - name: Upload Trivy image results
@@ -113,34 +104,7 @@ jobs:
         with:
           sarif_file: trivy-image.sarif
 
-=======
-          exit-code: "0"
-      
->>>>>>> b379d9bc2608c5dff14f4a3b73036504578a1c07
       - name: Push image
         run: |
-          docker push "$IMAGE_NAME:${GITHUB_SHA}"
-          docker push "$IMAGE_NAME:latest"
-
-      # - name: Build image
-      #   run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.IMAGE_NAME }}:latest app
-
-      # - name: Trivy image scan
-      #   uses: aquasecurity/trivy-action@v0.36.0
-      #   with:
-      #     image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-      #     format: sarif
-      #     output: trivy-image.sarif
-      #     severity: HIGH,CRITICAL
-      #     exit-code: "0"
-
-
-      # - name: Upload Trivy image results
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
-      #     sarif_file: trivy-image.sarif
-
-      # - name: Push image
-      #   run: |
-      #     docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
-      #     docker push ${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.IMAGE_NAME }}:latest
