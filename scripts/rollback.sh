@@ -1,3 +1,4 @@
+cat > scripts/rollback.sh << 'EOF'
 #!/usr/bin/env bash
 # Manual rollback - run on the VM: ./rollback.sh
 set -euo pipefail
@@ -11,7 +12,9 @@ fi
 PREV=$(cat .last_good_tag)
 echo "Rolling back to image tag: $PREV"
 sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$PREV/" .env
-docker compose pull app
-docker compose up -d --no-deps app
+docker compose pull app app-2 greeting-service
+docker compose up -d --no-deps app app-2 greeting-service
 sleep 5
-curl -fsS http://localhost:8000/health && echo "Rollback OK"
+curl -fsS http://localhost/health && echo "Rollback OK"
+EOF
+chmod +x scripts/rollback.sh

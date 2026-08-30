@@ -14,10 +14,10 @@ on:
 permissions:
   contents: read
   packages: write
-  security-events: write   # needed for Trivy SARIF upload to code scanning
+  security-events: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/solo-sre-app
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/cloud-playground
 
 jobs:
   test-and-scan:
@@ -41,15 +41,10 @@ jobs:
 
       - name: Unit tests
         working-directory: app
-        run: pytest || true   # replace with `pytest` once real tests exist
+        run: pytest || true
 
-      # ---------------------------------------------------------
-      # OWASP-style dependency scanning: Trivy covers both the
-      # filesystem (Python deps) and, later, the built image.
-      # Runs entirely on the GitHub-hosted runner - zero VM cost.
-      # ---------------------------------------------------------
       - name: Trivy filesystem scan (deps)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: app
@@ -62,20 +57,17 @@ jobs:
         with:
           sarif_file: trivy-fs.sarif
 
-      # ---------------------------------------------------------
-      # Static analysis - SonarCloud (free for public repos).
-      # Needs SONAR_TOKEN secret + a sonar-project.properties file.
-      # ---------------------------------------------------------
-      - name: SonarCloud scan
-        uses: SonarSource/sonarcloud-github-action@master
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@v5
         env:
+          SONAR_HOST_URL: https://sonarcloud.io
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        continue-on-error: true   # don't block the demo pipeline before secret is set up
+        continue-on-error: true
 
   build-and-push:
     needs: test-and-scan
-    # if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,61 +78,30 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Set image name
-        run: |
-          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-      
+
       - name: Build image
-        run: |
-          docker build \
-            -t "$IMAGE_NAME:${GITHUB_SHA}" \
-            -t "$IMAGE_NAME:latest" \
-            app
-      
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.IMAGE_NAME }}:latest app
+
+      - name: Build greeting-service image
+        run: docker build -t ${{ env.IMAGE_NAME }}-greeting:${{ github.sha }} -t ${{ env.IMAGE_NAME }}-greeting:latest app/greeting_service
+
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: sarif
           output: trivy-image.sarif
           severity: HIGH,CRITICAL
-<<<<<<< HEAD
-          exit-code: "0"   # report but don't block; set to "1" once you trust it
+          exit-code: "0"
 
       - name: Upload Trivy image results
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-image.sarif
 
-=======
-          exit-code: "0"
-      
->>>>>>> b379d9bc2608c5dff14f4a3b73036504578a1c07
-      - name: Push image
+      - name: Push images
         run: |
-          docker push "$IMAGE_NAME:${GITHUB_SHA}"
-          docker push "$IMAGE_NAME:latest"
-
-      # - name: Build image
-      #   run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.IMAGE_NAME }}:latest app
-
-      # - name: Trivy image scan
-      #   uses: aquasecurity/trivy-action@v0.36.0
-      #   with:
-      #     image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-      #     format: sarif
-      #     output: trivy-image.sarif
-      #     severity: HIGH,CRITICAL
-      #     exit-code: "0"
-
-
-      # - name: Upload Trivy image results
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
-      #     sarif_file: trivy-image.sarif
-
-      # - name: Push image
-      #   run: |
-      #     docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
-      #     docker push ${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.IMAGE_NAME }}-greeting:${{ github.sha }}
+          docker push ${{ env.IMAGE_NAME }}-greeting:latest

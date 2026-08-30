@@ -1,10 +1,3 @@
-# Runs entirely on the e2.micro. Memory limits are deliberate -
-# total budget kept under ~500MB to leave headroom for the OS,
-# SSH, and swap on a 1GB instance.
-#
-# CURRENT_IMAGE_TAG is written by the CD pipeline / rollback script
-# to control exactly which image version is running.
-
 services:
   app:
     image: ghcr.io/${GHCR_OWNER}/cloud-playground:${IMAGE_TAG:-latest}
@@ -25,11 +18,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Second replica of the same image - this is the load-balancing
-  # demo. Caddy round-robins between app and app-2 by default (no
-  # lb_policy needed for basic round-robin).
   app-2:
-    image: ghcr.io/${GHCR_OWNER}/solo-sre-app:${IMAGE_TAG:-latest}
+    image: ghcr.io/${GHCR_OWNER}/cloud-playground:${IMAGE_TAG:-latest}
     container_name: app-2
     restart: unless-stopped
     mem_limit: 120m
@@ -47,10 +37,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Small second service that /greet calls - the actual hop that
-  # makes distributed tracing meaningful instead of theoretical.
   greeting-service:
-    build: ./app/greeting_service
+    image: ghcr.io/${GHCR_OWNER}/cloud-playground-greeting:${IMAGE_TAG:-latest}
     container_name: greeting-service
     restart: unless-stopped
     mem_limit: 60m
@@ -63,8 +51,7 @@ services:
       - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
 
   caddy:
-    # build: ./caddy   # use this locally / in CI to get the rate-limit plugin
-    image: caddy:2-alpine   # swap for your custom-built + pushed image once ready
+    image: caddy:2-alpine
     container_name: caddy
     restart: unless-stopped
     mem_limit: 60m
@@ -93,10 +80,6 @@ services:
     volumes:
       - /:/host:ro,rslave
 
-  # vmagent scrapes local targets (app + node-exporter) and remote_writes
-  # to a free-tier hosted metrics backend (Grafana Cloud / VictoriaMetrics
-  # Cloud free tier). This is the key resource-budget decision: we do NOT
-  # run Prometheus + Grafana locally - storage and dashboards live off-box.
   vmagent:
     image: victoriametrics/vmagent:latest
     container_name: vmagent

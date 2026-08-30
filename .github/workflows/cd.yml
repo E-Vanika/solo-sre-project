@@ -5,10 +5,11 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - name: Deploy new image to VM
@@ -21,26 +22,15 @@ jobs:
             set -e
             cd /opt/sre-portfolio
 
-            # remember last-known-good tag for rollback
             CURRENT=$(grep '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2 || echo "latest")
             echo "$CURRENT" > .last_good_tag
 
             NEW_TAG="${{ github.sha }}"
             sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$NEW_TAG/" .env || echo "IMAGE_TAG=$NEW_TAG" >> .env
 
-            docker compose pull app app-2
-            docker compose up -d --no-deps app app-2
+            docker compose pull app app-2 greeting-service
+            docker compose up -d --no-deps app app-2 greeting-service
 
-            # Health check through Caddy (port 80), not the app
-            # container directly - "app" has no host port mapping by
-            # design (only reachable from other containers on the
-            # "internal" Docker network), so localhost:8000 on the VM
-            # itself was never reachable. Checking through Caddy also
-            # exercises the real path a user actually takes.
-            #
-            # Retry loop instead of one fixed sleep - a freshly
-            # recreated container needs a moment for uvicorn to bind,
-            # and a single 5s guess is fragile.
             HEALTHY=false
             for i in 1 2 3 4 5; do
               sleep 3
@@ -54,8 +44,8 @@ jobs:
             if [ "$HEALTHY" != "true" ]; then
               echo "Health check failed after retries, rolling back to $CURRENT"
               sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$CURRENT/" .env
-              docker compose pull app app-2
-              docker compose up -d --no-deps app app-2
+              docker compose pull app app-2 greeting-service
+              docker compose up -d --no-deps app app-2 greeting-service
               exit 1
             fi
             echo "Deploy of $NEW_TAG succeeded"
