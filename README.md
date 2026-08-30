@@ -1,54 +1,52 @@
 # Solo-SRE
 
-**A single free-tier VM, run the way a production system is run — not the way a tutorial is run.**
+**The full production lifecycle — CI/CD, service-mesh-equivalent networking, observability, incident response — built on a single free-tier VM instead of a cluster, on purpose.**
 
 ---
 
-## The need
+## The problem this solves
 
-I wanted a project that couldn't be faked with a tutorial: something that forces the same tradeoffs a real on-call engineer makes — capacity planning, defense in depth, deciding what has to run where, and having a rollback plan *before* you need one — and that's honest about its own limits instead of hiding them.
+Most portfolio projects show one skill in isolation: a Dockerfile, a Terraform script, a dashboard screenshot. Harder to fake — and what this project is built to show — is understanding *why* an organization reaches for Kubernetes, a service mesh, and a self-hosted observability stack at scale, and being able to deliver the same operational guarantees without them when the scale doesn't justify the cost.
 
-## The constraint, on purpose
+Real incidents happened while building this — a crash-looping reverse proxy, a race condition during VM bootstrap, a DNS misconfiguration, a multi-layered networking bug that took several wrong turns to actually solve. Those are documented as they happened, not cleaned up after the fact — see [Real incidents](#real-incidents-encountered-while-building-this) below and the full write-ups in [`docs/runbook.md`](docs/runbook.md).
 
-Everything here runs on a single Oracle Cloud **Always Free** e2.micro instance — 1 vCPU (burstable), 1GB RAM, $0/month. I didn't pick this because it's impressive hardware. I picked it because it removes the option of solving problems by throwing resources at them. Every decision below exists *because* of that constraint, and that reasoning is the actual point of the project.
+## Skills demonstrated
 
-## What it demonstrates
-
-| Area | What's built |
+| Discipline | Implementation |
 |---|---|
-| **Infrastructure as Code** | Terraform provisions the full OCI network (VCN, subnet, security list, internet gateway, route table) and the instance itself |
-| **Configuration management** | Ansible bootstraps the VM — Docker, firewall rules, swap, unattended security upgrades |
-| **CI/CD** | GitHub Actions: lint → test → Trivy dependency/image scan → SonarCloud static analysis → build → push to GHCR → SSH deploy → automated health-check-gated rollback |
-| **Observability** | RED metrics (rate/errors/duration) on the app, USE metrics (utilization/saturation/errors) on the host, shipped to a free hosted backend since self-hosting Prometheus+Grafana would exceed the memory budget |
-| **Networking & security** | Defense in depth: cloud firewall (OCI Security List) → host firewall (UFW) → reverse proxy (Caddy: automatic TLS, path-based routing, rate limiting, passive-health-check circuit breaking, basic auth on internal endpoints) → the app itself is never exposed on a host port |
-| **SLOs & incident response** | Defined SLIs/SLOs, an error-budget burn-rate alert, a runbook for the failure modes I actually tested, and a blameless postmortem written from a real (self-induced) incident |
+| Infrastructure as Code | Terraform — VCN, subnet, security list, internet gateway, route table, instance, all version-controlled and plan-gated behind a manual approval in CI |
+| Configuration management | Ansible — VM bootstrap: Docker install, UFW rules, swap configuration, unattended security upgrades |
+| CI/CD | GitHub Actions — lint, test, Trivy scan, SonarQube Cloud scan, build, push to GHCR, SSH deploy, health-check-gated automatic rollback |
+| Security | Defense in depth: OCI Security List (with an explicit egress rule, since OCI has no default-allow-outbound) → UFW → Caddy (TLS, path routing, basic auth, passive-health-check circuit breaking) → app never bound to a host port |
+| Observability | RED metrics (app) + USE metrics (host), shipped via `vmagent` to Grafana Cloud's free tier, dashboarded and alerted on |
+| SLOs & incident response | Defined SLIs/SLOs at 99.0% (not an aspirational number — what a single-VM, single-AZ system can actually promise), burn-rate alerting through Grafana IRM with a tested on-call escalation, a runbook, and chaos scripts that exercise real failure modes |
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[Browser] -->|DNS: DuckDNS / nip.io| B[Public Internet]
+    A[Browser] -->|DNS: DuckDNS| B[Public Internet]
     B --> C[OCI Internet Gateway]
-    C --> D[Route Table<br/>0.0.0.0/0 → IGW]
+    C --> D["Route Table<br/>0.0.0.0/0 → IGW"]
     D --> E[VCN 10.0.0.0/16]
     E --> F[Subnet 10.0.1.0/24]
-    F --> G["Security List<br/>22 restricted · 80/443 open"]
+    F --> G["Security List<br/>22 restricted · 80/443 open · explicit egress rule"]
     G --> H[VNIC — public IP]
     H --> I[UFW — host firewall]
-    I --> J["Caddy<br/>TLS · auth · rate limit · circuit breaking"]
+    I --> J["Caddy<br/>TLS · auth · path routing · circuit breaking"]
     J -->|docker internal network only| K[FastAPI app container]
     K -.->|never bound to a host port| H
 
     K --> L[/metrics/]
     M[node-exporter] --> N[vmagent]
     L --> N
-    N -->|remote_write| O[Grafana Cloud<br/>dashboards + alerting]
+    N -->|remote_write| O[Grafana Cloud<br/>dashboards + alerting + on-call]
 ```
 
 ```mermaid
 flowchart LR
     A[git push to main] --> B[CI: lint, test]
-    B --> C[Trivy scan + SonarCloud]
+    B --> C[Trivy scan + SonarQube Cloud]
     C --> D[Build image]
     D --> E[Push to GHCR]
     E --> F[CD: SSH deploy to VM]
@@ -57,28 +55,74 @@ flowchart LR
     G -->|no| I[Auto-rollback<br/>to last-good tag]
 ```
 
-## Why this approach, specifically
+## What large orgs run, and what stands in for it here
 
-- **No load balancer, one public IP, and I say so.** A single VM is a single point of failure. Rather than dress that up, the docs name it directly — that honesty is more useful to a reviewer than pretending this is production-grade HA.
-- **Nothing heavy runs on the VM.** CI, security scanning, and metrics storage/dashboards all run off-box (GitHub Actions, GHCR, Grafana Cloud free tier) for free. The VM only carries what absolutely must be on it: the app, the proxy, and a lightweight metrics shipper. Knowing what has to run where, under a real resource ceiling, is the actual skill this project is built to show.
-- **The SLO is 99.0%, not 99.9%.** Claiming five-nines on hardware that can't deliver it would be dishonest. The number reflects what a single-VM, single-AZ system can actually promise.
-- **Immutable, versioned deploys.** Every image is tagged by git SHA, never `latest` in practice — so rollback is "redeploy a known-good artifact," decided in advance, not improvised during an incident.
+| At organization scale | In this project | Why the swap holds up |
+|---|---|---|
+| Kubernetes (EKS/GKE) | Docker Compose on one OCI e2.micro | Orchestration exists to schedule across many nodes and reschedule on failure — on one node it's overhead with no payoff |
+| ArgoCD / Flux | GitHub Actions CD — SSH deploy, health-check gate, automatic rollback | Same principle (git as source of truth, automated and reversible deploys), sized for one target instead of a cluster |
+| Istio / service mesh | Caddy — TLS, path routing, auth, passive circuit breaking, weighted canary support | A mesh manages sidecar-to-sidecar traffic across many services; with one service, Caddy gives the same edge capabilities without the sidecar tax |
+| Self-hosted Prometheus + Grafana HA pair | `vmagent` + Grafana Cloud free tier | Same RED/USE model; storage, dashboards, and alerting run off-box entirely |
+| PagerDuty / Opsgenie | Grafana IRM (on-call schedule + escalation chain) | Same alert-to-human pattern, tested end-to-end by deliberately tripping an alert, not just configured |
+| Vault / Secrets Manager | GitHub Actions secrets + `.env` on the VM (OIDC-based short-lived Terraform auth on the roadmap) | Same core principle — no long-lived credentials sitting around — at a scale that doesn't need a dedicated secrets cluster |
+| Self-hosted SonarQube + Trivy Operator | SonarQube Cloud (free tier) + Trivy in CI | Same quality/security gates, running on GitHub's infrastructure instead of a dedicated scanning cluster |
 
-## How to run it
+## What's actually being observed, and how
 
-Full setup instructions — including exact GitHub secret names, the Grafana Cloud API key walkthrough, and the Ansible bootstrap flow — are in [`docs/setup.md`](docs/setup.md).
+**RED (application)** — instrumented in `app/main.py` via `prometheus_client`:
+- `http_requests_total{path, status}` → request rate and error rate per endpoint
+- `http_request_duration_seconds{path}` → a histogram, giving p50/p95/p99 via `histogram_quantile()`, not just an average
 
-1. `terraform apply` — provisions the VCN, subnet, security list, and VM
-2. Run the **Ansible Bootstrap** GitHub Actions workflow — installs Docker, UFW, swap
-3. SSH in once to set `.env` (GHCR + Grafana Cloud credentials)
-4. First manual `docker compose up -d`
-5. From then on, every push to `main` deploys itself — CI builds and scans, CD ships it, a failed health check rolls it back automatically
+**USE (host)** — `node-exporter`, scraped locally by `vmagent` on the same Docker network (no host-networking or firewall exceptions needed — see the incident writeup below for why that specific design was chosen):
+- CPU utilization and saturation
+- Memory + swap utilization — the one that matters most on 1GB RAM
+- Disk utilization
 
-## What's next
+Both are scraped every 30s and shipped via `remote_write` to Grafana Cloud — no metrics storage runs on the VM itself. Dashboard definition: [`dashboards/solo-sre-dashboard.json`](dashboards/solo-sre-dashboard.json).
+
+**Alerting → on-call**: burn-rate alerts (defined in [`docs/slo.md`](docs/slo.md)) route through Grafana IRM to a real on-call schedule and escalation chain, verified by deliberately tripping `/error` and confirming the notification actually arrived — not just configured and left unverified.
+
+## Chaos engineering — `scripts/chaos-test.sh`
+
+| Scenario | Simulates | Expected recovery |
+|---|---|---|
+| `kill-app` | Process crash | Docker restarts the container automatically (`restart: unless-stopped`) |
+| `cpu-spike` | Traffic spike on burstable CPU | Latency degrades visibly on the dashboard rather than the instance falling over |
+| `fill-disk` | Disk exhaustion | Surfaces the failure mode deliberately, before it happens for real |
+| `oom` | Memory limit breach | Container OOM-killed and restarted — proves the `mem_limit` + restart policy combination actually works |
+
+Each run gets written up in [`docs/postmortem-template.md`](docs/postmortem-template.md) — a filled-in postmortem from a real, self-induced incident, dashboard screenshots included, is stronger evidence than a description of "SRE principles."
+
+## Real incidents encountered while building this
+
+Kept here deliberately, because working through them *is* the point of the project. Full diagnostic detail in [`docs/runbook.md`](docs/runbook.md).
+
+- **Caddy crash-looped on first deploy.** `rate_limit is not a registered directive` — the Caddyfile referenced a plugin that only exists in a custom-built image, not the stock one actually running. Root-caused via `docker logs caddy`, fixed by disabling the plugin-dependent config until the custom build is in use.
+- **`apt update` failed intermittently during Ansible bootstrap.** Traced to `cloud-init` still holding the apt lock on a fresh VM. Fixed by adding an explicit `cloud-init status --wait` task before any `apt` task, instead of just retrying blindly into the race.
+- **DNS pointed at the wrong IP.** DuckDNS auto-filled the browser's own IP at signup, not the VM's. Caught via `curl -v` returning a connection *timeout* rather than a TLS error — a useful signal the problem was network reachability, not certificate configuration.
+- **Metrics pipeline had three separate root causes stacked on top of each other.** `vmagent` and `node-exporter` were on different Docker network types (host networking vs. a bridge network) and couldn't reach each other by name. Working around it with a raw IP address then hit Docker's own bridge-to-bridge isolation, then an unopened firewall port. The actual fix wasn't another workaround — it was recognizing `node-exporter` never needed host networking at all (`pid: host` + a mounted host filesystem already gives it real host metrics), and moving it onto the same bridge network as everything else, which removed the whole class of problem instead of patching around each symptom of it.
+
+## How to verify it yourself
+
+1. `https://<domain>/health` → `{"status":"healthy"}`
+2. `docker logs caddy` shows successful ACME certificate issuance
+3. `curl -u monitor:*** https://<domain>/metrics` returns live Prometheus metrics
+4. Grafana Explore shows real `http_requests_total` data
+5. The imported dashboard shows populated RED + USE panels
+6. GitHub Actions shows green CI and CD runs
+7. SonarQube Cloud shows a scanned project
+8. A chaos scenario run shows a visible dip and recovery on the dashboard
+
+Screenshots of each: [`SCREENSHOTS.md`](SCREENSHOTS.md).
+
+## Full setup instructions
+[`docs/setup.md`](docs/setup.md) — secrets, Grafana Cloud credential walkthrough, Ansible bootstrap, first deploy.
+
+## Roadmap
 - Short-lived SSH certificates instead of a static deploy key
-- OCI Workload Identity Federation to remove the static OCI API key from CI entirely
+- OCI Workload Identity Federation to remove the static OCI API key from CI
 - A second app instance behind Caddy for a real weighted canary rollout
 
 ---
 
-*Everything in this repo runs at $0/month. See [`docs/architecture.md`](docs/architecture.md) for the full networking and TLS walkthrough, [`docs/slo.md`](docs/slo.md) for the SLIs/SLOs and PromQL, and [`docs/runbook.md`](docs/runbook.md) for the incident-response playbook.*
+*Everything in this repo runs at $0/month. [`docs/architecture.md`](docs/architecture.md) has the full networking + TLS walkthrough, [`docs/slo.md`](docs/slo.md) the SLIs/SLOs and PromQL, [`docs/runbook.md`](docs/runbook.md) the incident-response playbook.*
