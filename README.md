@@ -80,6 +80,8 @@ flowchart LR
 
 Both are scraped every 30s and shipped via `remote_write` to Grafana Cloud — no metrics storage runs on the VM itself. Dashboard definition: [`dashboards/solo-sre-dashboard.json`](dashboards/solo-sre-dashboard.json).
 
+**Traces** — `app` calls `greeting-service` over HTTP at `/greet`, both instrumented with OpenTelemetry (`opentelemetry-instrumentation-fastapi` on each service, `opentelemetry-instrumentation-httpx` on the caller). Trace context propagates automatically across that call, so Tempo shows it as **one connected trace with two spans**, not two unrelated ones — that's what makes it real distributed tracing rather than isolated request logging: you can see exactly how much of `/greet`'s total latency happened in `app` versus inside `greeting-service`. Ships via OTLP/HTTP straight from the Python process to Grafana Cloud Tempo, same off-box pattern as metrics and logs.
+
 **Alerting → on-call**: burn-rate alerts (defined in [`docs/slo.md`](docs/slo.md)) route through Grafana IRM to a real on-call schedule and escalation chain, verified by deliberately tripping `/error` and confirming the notification actually arrived — not just configured and left unverified.
 
 ## Chaos engineering — `scripts/chaos-test.sh`
@@ -102,23 +104,41 @@ Kept here deliberately, because working through them *is* the point of the proje
 - **DNS pointed at the wrong IP.** DuckDNS auto-filled the browser's own IP at signup, not the VM's. Caught via `curl -v` returning a connection *timeout* rather than a TLS error — a useful signal the problem was network reachability, not certificate configuration.
 - **Metrics pipeline had three separate root causes stacked on top of each other.** `vmagent` and `node-exporter` were on different Docker network types (host networking vs. a bridge network) and couldn't reach each other by name. Working around it with a raw IP address then hit Docker's own bridge-to-bridge isolation, then an unopened firewall port. The actual fix wasn't another workaround — it was recognizing `node-exporter` never needed host networking at all (`pid: host` + a mounted host filesystem already gives it real host metrics), and moving it onto the same bridge network as everything else, which removed the whole class of problem instead of patching around each symptom of it.
 
-## How to verify it yourself
 
-1. `https://<domain>/health` → `{"status":"healthy"}`
-2. `docker logs caddy` shows successful ACME certificate issuance
-3. `curl -u monitor:*** https://<domain>/metrics` returns live Prometheus metrics
-4. Grafana Explore shows real `http_requests_total` data
-5. The imported dashboard shows populated RED + USE panels
-6. GitHub Actions shows green CI and CD runs
-7. SonarQube Cloud shows a scanned project
-8. A chaos scenario run shows a visible dip and recovery on the dashboard
 
-Screenshots of each: [`SCREENSHOTS.md`](SCREENSHOTS.md).
 
-## Full setup instructions
-[`docs/setup.md`](docs/setup.md) — secrets, Grafana Cloud credential walkthrough, Ansible bootstrap, first deploy.
+## Deployment strategies — what's real, what's roadmap
 
-## Roadmap
+Every image is tagged by git SHA when it's built (`ci.yml` pushes both `:latest` and `:<sha>`), and `cd.yml` deploys the specific SHA, never floating `:latest` — that distinction is what makes rollback deterministic instead of a guess.
+
+**Rollback (built, tested for real):** Before every deploy, the currently-running tag is saved to `.last_good_tag`. After deploying the new tag, a health check runs (through Caddy, with retries) — if it fails, the pipeline immediately redeploys the saved tag automatically, no human involved. This has already happened for real during development (see [Real incidents](#real-incidents-encountered-while-building-this)) — it's not just configured, it's been proven to fire correctly under a genuine failure.
+
+**Rolling deployment (built):** what `cd.yml` actually does today — pull the new tag, recreate the `app` container, gate on health. On a single instance this is precisely "recreate with a safety net," not a multi-node rolling update — worth being exact about that distinction rather than overclaiming it.
+
+**Blue-green (designed, not built):** would mean running two `app` containers simultaneously — start the new one alongside the old one, health-check the new one, atomically flip Caddy's `reverse_proxy` upstream to it, then stop the old one. This removes even the brief gap the current rolling recreate has. Not built because it needs sustained extra memory for the overlap window, which is the actual tradeoff on a 1GB instance — not a knowledge gap.
+
+**Canary (designed, not built):** Caddy's `reverse_proxy` supports `lb_policy weighted 9 1` across two upstreams — the mechanism exists and is documented inline in `caddy/Caddyfile`. Needs a real second `app-canary` service running a second image tag before it does anything; currently commented out as a syntax reference, not a live toggle.
+
+## Authentication & authorization at the edge (Caddy)
+
+**Authentication — yes, real:** `/metrics` is protected by HTTP Basic Auth (`basic_auth` directive), credentials stored as a bcrypt hash, never plaintext, in `Caddyfile`.
+
+**Authorization — partial, and worth being precise about the boundary:** Caddy enforces *path-based* access control — who can reach `/metrics` at all, via `handle_path`. That's coarse authorization (a gate), not fine-grained authorization (per-user permissions, roles, scopes) — which belongs in the application layer, not the reverse proxy. This project doesn't currently need per-user auth since there's no multi-user concept in the app itself; if it grew one, that logic would live in FastAPI (e.g. JWT validation), with Caddy still handling the coarse edge gate in front of it.
+
+## Post-deploy verification — smoke testing after CD
+
+Not yet built — a real gap worth naming rather than skipping. The addition: a step appended to `cd.yml` after the health check passes, running from the GitHub Actions runner (external to the VM, testing the real public path):
+```yaml
+      - name: Post-deploy smoke test
+        run: |
+          set -e
+          curl -fsS https://solo-sre-pg.duckdns.org/health
+          curl -fsS https://solo-sre-pg.duckdns.org/ | grep -q "Solo-SRE"
+          curl -fsS -o /dev/null -w "%{http_code}" https://solo-sre-pg.duckdns.org/slow | grep -q 200
+```
+This checks the deployment from the *outside*, the way a real user reaches it — DNS, TLS, Caddy, and the app all in one shot — rather than only the internal `localhost` check `cd.yml` already does. A fuller version would run the actual `pytest` suite from `app/test_main.py` against the live URL instead of hardcoded `curl` checks.
+
+
 - Short-lived SSH certificates instead of a static deploy key
 - OCI Workload Identity Federation to remove the static OCI API key from CI
 - A second app instance behind Caddy for a real weighted canary rollout
