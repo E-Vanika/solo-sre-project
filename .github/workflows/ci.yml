@@ -16,9 +16,6 @@ permissions:
   packages: write
   security-events: write
 
-env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/cloud-playground
-
 jobs:
   test-and-scan:
     runs-on: ubuntu-latest
@@ -67,10 +64,13 @@ jobs:
 
   build-and-push:
     needs: test-and-scan
-    # if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Compute lowercase image name
+        run: echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/cloud-playground" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
