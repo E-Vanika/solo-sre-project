@@ -5,7 +5,6 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
-  workflow_dispatch:
 
 jobs:
   deploy:
@@ -20,7 +19,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
             set -e
-            cd /opt/solo-sre
+            cd /opt/sre-portfolio
 
             # remember last-known-good tag for rollback
             CURRENT=$(grep '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2 || echo "latest")
@@ -29,16 +28,53 @@ jobs:
             NEW_TAG="${{ github.sha }}"
             sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$NEW_TAG/" .env || echo "IMAGE_TAG=$NEW_TAG" >> .env
 
-            docker compose pull app
-            docker compose up -d --no-deps app
+            docker compose pull app app-2
+            docker compose up -d --no-deps app app-2
 
-            # health check with automatic rollback
-            sleep 5
-            if ! curl -fsS http://localhost:8000/health; then
-              echo "Health check failed, rolling back to $CURRENT"
+            # Health check through Caddy (port 80), not the app
+            # container directly - "app" has no host port mapping by
+            # design (only reachable from other containers on the
+            # "internal" Docker network), so localhost:8000 on the VM
+            # itself was never reachable. Checking through Caddy also
+            # exercises the real path a user actually takes.
+            #
+            # Retry loop instead of one fixed sleep - a freshly
+            # recreated container needs a moment for uvicorn to bind,
+            # and a single 5s guess is fragile.
+            HEALTHY=false
+            for i in 1 2 3 4 5; do
+              sleep 3
+              if curl -fsS http://localhost/health; then
+                HEALTHY=true
+                break
+              fi
+              echo "Health check attempt $i failed, retrying..."
+            done
+
+            if [ "$HEALTHY" != "true" ]; then
+              echo "Health check failed after retries, rolling back to $CURRENT"
               sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$CURRENT/" .env
-              docker compose pull app
-              docker compose up -d --no-deps app
+              docker compose pull app app-2
+              docker compose up -d --no-deps app app-2
               exit 1
             fi
             echo "Deploy of $NEW_TAG succeeded"
+
+  smoke-test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the live public endpoint post-deploy
+        run: |
+          set -e
+          echo "Checking public health endpoint..."
+          curl -fsS https://solo-sre-pg.duckdns.org/health
+
+          echo "Checking landing page renders..."
+          curl -fsS https://solo-sre-pg.duckdns.org/ | grep -q "Solo-SRE"
+
+          echo "Checking /slow responds 200..."
+          STATUS=$(curl -fsS -o /dev/null -w "%{http_code}" https://solo-sre-pg.duckdns.org/slow)
+          [ "$STATUS" = "200" ]
+
+          echo "All smoke checks passed."

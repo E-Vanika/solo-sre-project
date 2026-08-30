@@ -4,12 +4,23 @@ global:
 scrape_configs:
   - job_name: "app"
     static_configs:
-      - targets: ["localhost:8000"]
+      - targets: ["app:8000"]
         labels:
           service: "solo-sre-app"
+          instance_role: "primary"
+      - targets: ["app-2:8000"]
+        labels:
+          service: "solo-sre-app"
+          instance_role: "replica"
+
+  - job_name: "greeting-service"
+    static_configs:
+      - targets: ["greeting-service:8001"]
+        labels:
+          service: "greeting-service"
 
   - job_name: "node"
     static_configs:
-      - targets: ["localhost:9100"]
+      - targets: ["node-exporter:9100"]
         labels:
           service: "host"

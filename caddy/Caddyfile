@@ -1,39 +1,21 @@
-{
-    # global options
-    # non-standard plugin directives need an explicit order
-    order rate_limit before basic_auth
-}
-
-your-domain.example.com {
+solo-sre-pg.duckdns.org {
     encode gzip
-
-    # ------------------------------------------------------------
-    # RATE LIMITING (needs the custom-built caddy image - see Dockerfile)
-    # 20 requests / 10s per client IP, applied to everything.
-    # ------------------------------------------------------------
-    rate_limit {
-        zone dynamic {
-            key    {http.request.remote_ip}
-            events 20
-            window 10s
-        }
-    }
 
     # ------------------------------------------------------------
     # PATH-BASED ROUTING + AUTHENTICATION/AUTHORIZATION
     # /metrics is internal-only data - protect it with basic auth
-    # (generate the hash with: docker run caddy caddy hash-password)
+    # (generate the hash with: docker run --rm caddy:2-alpine caddy hash-password)
     # ------------------------------------------------------------
     handle_path /metrics* {
         basic_auth {
-            monitor $2a$14$REPLACE_WITH_HASHED_PASSWORD
+            monitor $2a$14$kB3MbXV1AzbWtQvP0UbNdOVhDz1bqTRq20svbSaH5F6/79CVdfV2y
         }
         reverse_proxy app:8000
     }
 
     # everything else - public
     handle {
-        reverse_proxy app:8000 {
+        reverse_proxy app:8000 app-2:8000 {
             # ----------------------------------------------------
             # CIRCUIT BREAKING (approximation)
             # Caddy has no true half-open-state breaker like
@@ -61,19 +43,51 @@ your-domain.example.com {
 }
 
 # ------------------------------------------------------------
-# CANARY DEPLOYMENT EXAMPLE (commented out - enable when you have
-# two image tags running as separate services, e.g. "app" (stable)
-# and "app-canary" (new release) in docker-compose.yml)
+# RATE LIMITING - disabled for now. The stock caddy:2-alpine
+# image doesn't include this directive; it only works once you
+# build and switch to the custom image in caddy/Dockerfile
+# (adds github.com/mholt/caddy-ratelimit via xcaddy). To
+# re-enable: uncomment the block below AND add this to the very
+# top of the file, outside any site block:
+#
+#   {
+#       order rate_limit before basic_auth
+#   }
+#
+# This one IS a genuine drop-in toggle once the plugin is built in -
+# no other changes needed besides the "order" directive above.
+#
+# rate_limit {
+#     zone dynamic {
+#         key    {http.request.remote_ip}
+#         events 20
+#         window 10s
+#     }
+# }
+
 # ------------------------------------------------------------
-# your-domain.example.com {
+# CANARY DEPLOYMENT EXAMPLE - syntax reference only, NOT a drop-in
+# toggle. Uncommenting this as-is will break Caddy: it redefines
+# solo-sre-pg.duckdns.org a second time, which conflicts with the
+# site block already defined above (Caddy doesn't allow the same
+# domain twice). To actually use this:
+#   1. Delete the duplicate "solo-sre-pg.duckdns.org {" line below
+#      and merge its reverse_proxy into the main site block instead
+#   2. Add a real "app-canary" service to docker-compose.yml running
+#      a second image tag
+#   3. Only then does lb_policy weighted have two real upstreams
+# ------------------------------------------------------------
+# solo-sre-pg.duckdns.org {
 #     reverse_proxy app:8000 app-canary:8000 {
 #         lb_policy weighted 9 1   # 90% stable, 10% canary
 #     }
 # }
 
 # ------------------------------------------------------------
-# mTLS EXAMPLE (commented out - for service-to-service auth once
-# you have more than one internal service calling this one)
+# mTLS EXAMPLE - genuine drop-in reference for service-to-service
+# auth once you have more than one internal service calling this
+# one. Adjust the hostname and cert paths, this one doesn't
+# conflict with anything else in the file.
 # ------------------------------------------------------------
 # internal-api.example.com {
 #     tls /path/to/server-cert.pem /path/to/server-key.pem {
@@ -87,5 +101,5 @@ your-domain.example.com {
 
 # Fallback for bare-IP access during setup/testing (HTTP only, no TLS)
 :80 {
-    reverse_proxy app:8000
+    reverse_proxy app:8000 app-2:8000
 }

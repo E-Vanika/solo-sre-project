@@ -10,17 +10,57 @@ services:
     image: ghcr.io/${GHCR_OWNER}/cloud-playground:${IMAGE_TAG:-latest}
     container_name: app
     restart: unless-stopped
-    mem_limit: 150m
-    memswap_limit: 300m
+    mem_limit: 120m
+    memswap_limit: 240m
     expose:
       - "8000"
     networks:
       - internal
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Second replica of the same image - this is the load-balancing
+  # demo. Caddy round-robins between app and app-2 by default (no
+  # lb_policy needed for basic round-robin).
+  app-2:
+    image: ghcr.io/${GHCR_OWNER}/solo-sre-app:${IMAGE_TAG:-latest}
+    container_name: app-2
+    restart: unless-stopped
+    mem_limit: 120m
+    memswap_limit: 240m
+    expose:
+      - "8000"
+    networks:
+      - internal
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Small second service that /greet calls - the actual hop that
+  # makes distributed tracing meaningful instead of theoretical.
+  greeting-service:
+    build: ./app/greeting_service
+    container_name: greeting-service
+    restart: unless-stopped
+    mem_limit: 60m
+    expose:
+      - "8001"
+    networks:
+      - internal
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
 
   caddy:
     # build: ./caddy   # use this locally / in CI to get the rate-limit plugin
