@@ -144,11 +144,37 @@ This checks the deployment from the *outside*, the way a real user reaches it �
 - A second app instance behind Caddy for a real weighted canary rollout
 
 ---
+## 🔗 Useful Links
 
-Useful link:
-To checkout the app: https://solo-sre-pg.duckdns.org/
-Grafana: https://merrycanary2243.grafana.net/d/vak4trs/solo-sre?from=now-1h&to=now&timezone=browser&refresh=30s
-Sonarqube: https://sonarcloud.io/organizations/e-vanika/projects
+Explore the live application, observability dashboards, and code-quality reports:
+
+| Resource                 | Link                                                                                                                       | Purpose                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 🚀 **Live Application**  | [Solo-SRE](https://solo-sre-pg.duckdns.org/)                                                                               | Access the live application and SRE demo                               |
+| 📊 **Grafana Dashboard** | [Solo-SRE Grafana](https://merrycanary2243.grafana.net/d/vak4trs/solo-sre?from=now-1h&to=now&timezone=browser&refresh=30s) | Monitor application metrics, traffic, latency, errors, and SRE signals |
+| 🔍 **SonarCloud**        | [SonarCloud Projects](https://sonarcloud.io/organizations/e-vanika/projects)                                               | Code quality, security analysis, and maintainability insights          |
+
+### 🩺 Live Service Endpoints
+
+The deployed service also exposes endpoints useful for demonstrating SRE practices:
+
+* **Health Check:** `https://solo-sre-pg.duckdns.org/health`
+* **Metrics:** `https://solo-sre-pg.duckdns.org/metrics`
+* **Slow Endpoint:** `https://solo-sre-pg.duckdns.org/slow`
+* **Error Simulation:** `https://solo-sre-pg.duckdns.org/error`
+
+> 💡 The `/slow` and `/error` endpoints are intentionally designed to generate latency and failure scenarios for demonstrating **observability, alerting, error budgets, burn-rate analysis, and incident response**.
+
+### ⚙️ Deployment
+
+The application is deployed using **GitHub Actions CI/CD** with:
+
+* 🔄 Automated deployments
+* 🏷️ Git SHA-based image tagging
+* ❤️ Health-check gated releases
+* ↩️ Automatic rollback on failed deployments
+* 🔐 TLS-enabled access
+* 📈 Production-style observability
 
 ---
 *Everything in this repo runs at $0/month. [`docs/architecture.md`](docs/architecture.md) has the full networking + TLS walkthrough, [`docs/slo.md`](docs/slo.md) the SLIs/SLOs and PromQL, [`docs/runbook.md`](docs/runbook.md) the incident-response playbook.*
