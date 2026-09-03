@@ -145,4 +145,10 @@ This checks the deployment from the *outside*, the way a real user reaches it â€
 
 ---
 
+Useful link:
+To checkout the app: https://solo-sre-pg.duckdns.org/
+Grafana: https://merrycanary2243.grafana.net/d/vak4trs/solo-sre?from=now-1h&to=now&timezone=browser&refresh=30s
+Sonarqube: https://sonarcloud.io/organizations/e-vanika/projects
+
+---
 *Everything in this repo runs at $0/month. [`docs/architecture.md`](docs/architecture.md) has the full networking + TLS walkthrough, [`docs/slo.md`](docs/slo.md) the SLIs/SLOs and PromQL, [`docs/runbook.md`](docs/runbook.md) the incident-response playbook.*
