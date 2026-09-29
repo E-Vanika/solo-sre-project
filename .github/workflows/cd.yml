@@ -7,6 +7,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  NEW_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+  BASE_URL: https://solo-sre-pg.duckdns.org
+
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
@@ -18,34 +26,44 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ubuntu
           key: ${{ secrets.VM_SSH_KEY }}
+          envs: NEW_TAG
           script: |
             set -e
             cd /opt/sre-portfolio
 
-            CURRENT=$(grep '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2 || echo "latest")
+            CURRENT=$(grep '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2 || true)
+            CURRENT=${CURRENT:-latest}
             echo "$CURRENT" > .last_good_tag
 
-            NEW_TAG="${{ github.sha }}"
-            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$NEW_TAG/" .env || echo "IMAGE_TAG=$NEW_TAG" >> .env
+            set_tag() {
+              if grep -q '^IMAGE_TAG=' .env 2>/dev/null; then
+                sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$1/" .env
+              else
+                echo "IMAGE_TAG=$1" >> .env
+              fi
+            }
+            roll() {
+              docker compose pull app app-2 greeting-service
+              docker compose up -d --no-deps app app-2 greeting-service
+            }
 
-            docker compose pull app app-2 greeting-service
-            docker compose up -d --no-deps app app-2 greeting-service
+            set_tag "$NEW_TAG"
+            roll
 
             HEALTHY=false
-            for i in 1 2 3 4 5; do
+            for i in $(seq 1 10); do
               sleep 3
-              if curl -fsS http://localhost/health; then
+              if curl -fsS -o /dev/null http://localhost/readyz; then
                 HEALTHY=true
                 break
               fi
-              echo "Health check attempt $i failed, retrying..."
+              echo "Readiness attempt $i failed, retrying..."
             done
 
             if [ "$HEALTHY" != "true" ]; then
-              echo "Health check failed after retries, rolling back to $CURRENT"
-              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$CURRENT/" .env
-              docker compose pull app app-2 greeting-service
-              docker compose up -d --no-deps app app-2 greeting-service
+              echo "Not ready after retries, rolling back to $CURRENT"
+              set_tag "$CURRENT"
+              roll
               exit 1
             fi
             echo "Deploy of $NEW_TAG succeeded"
@@ -57,14 +75,17 @@ jobs:
       - name: Verify the live public endpoint post-deploy
         run: |
           set -e
-          echo "Checking public health endpoint..."
-          curl -fsS https://solo-sre-pg.duckdns.org/health
+          echo "Readiness..."
+          curl -fsS --retry 3 --retry-delay 2 "$BASE_URL/readyz"
 
-          echo "Checking landing page renders..."
-          curl -fsS https://solo-sre-pg.duckdns.org/ | grep -q "Solo-SRE"
+          echo "Landing page renders..."
+          curl -fsS "$BASE_URL/" | grep -q "Devkit"
 
-          echo "Checking /slow responds 200..."
-          STATUS=$(curl -fsS -o /dev/null -w "%{http_code}" https://solo-sre-pg.duckdns.org/slow)
-          [ "$STATUS" = "200" ]
+          echo "Tool endpoint works..."
+          curl -fsS "$BASE_URL/api/hash?text=smoke&algo=sha256" | grep -q '"hash"'
+
+          echo "Serving the version we just deployed..."
+          LIVE=$(curl -fsS "$BASE_URL/status" | jq -r .version)
+          [ "$LIVE" = "$NEW_TAG" ] || { echo "live=$LIVE expected=$NEW_TAG"; exit 1; }
 
           echo "All smoke checks passed."
