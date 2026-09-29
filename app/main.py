@@ -15,6 +15,7 @@ Configuration (all optional, via environment):
   UPSTREAM_REQUIRED            "true" makes /readyz depend on the upstream
   CHAOS_ENABLED                "true" exposes /_chaos/* fault endpoints
 """
+
 import base64
 import binascii
 import hashlib
@@ -32,8 +33,8 @@ from urllib.parse import quote, unquote
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from pydantic import BaseModel, Field
 
 log = logging.getLogger("devkit")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -72,7 +73,9 @@ def setup_tracing(application: FastAPI) -> None:
         return
     try:
         from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         from opentelemetry.sdk.resources import Resource
@@ -80,7 +83,9 @@ def setup_tracing(application: FastAPI) -> None:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         provider = TracerProvider(
-            resource=Resource.create({"service.name": "devkit", "service.version": VERSION})
+            resource=Resource.create(
+                {"service.name": "devkit", "service.version": VERSION}
+            )
         )
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
         trace.set_tracer_provider(provider)
@@ -89,7 +94,7 @@ def setup_tracing(application: FastAPI) -> None:
         )
         HTTPXClientInstrumentor().instrument()
         log.info("tracing enabled -> %s", OTLP_ENDPOINT)
-    except Exception:  # noqa: BLE001 - observability must never take the app down
+    except Exception:  # observability must never take the app down
         log.exception("tracing setup failed; continuing without it")
 
 
@@ -115,7 +120,11 @@ def get_client_ip(request: Request) -> str:
     direct = request.client.host if request.client else "unknown"
     if TRUSTED_PROXY_HOPS <= 0:
         return direct
-    parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    parts = [
+        p.strip()
+        for p in request.headers.get("x-forwarded-for", "").split(",")
+        if p.strip()
+    ]
     if len(parts) >= TRUSTED_PROXY_HOPS:
         return parts[-TRUSTED_PROXY_HOPS]
     return direct
@@ -147,7 +156,9 @@ class SlidingWindowLimiter:
         if now - self._last_prune < self.window:
             return
         self._last_prune = now
-        for key in [k for k, q in self.hits.items() if not q or now - q[-1] > self.window]:
+        for key in [
+            k for k, q in self.hits.items() if not q or now - q[-1] > self.window
+        ]:
             del self.hits[key]
 
 
@@ -181,7 +192,9 @@ async def record_metrics(request: Request, call_next):
         path = route.path if route else "unmatched"  # template, not raw URL
         if request.url.path not in OPS_PATHS:
             REQUEST_COUNT.labels(request.method, path, str(status)).inc()
-            REQUEST_LATENCY.labels(request.method, path).observe(time.perf_counter() - start)
+            REQUEST_LATENCY.labels(request.method, path).observe(
+                time.perf_counter() - start
+            )
 
 
 # --------------------------------------------------------------------------
@@ -341,7 +354,9 @@ def readyz():
         try:
             httpx.get(f"{UPSTREAM_URL}/healthz", timeout=2.0).raise_for_status()
         except httpx.HTTPError:
-            return JSONResponse({"status": "not ready", "reason": "upstream"}, status_code=503)
+            return JSONResponse(
+                {"status": "not ready", "reason": "upstream"}, status_code=503
+            )
     return {"status": "ready"}
 
 
@@ -396,7 +411,7 @@ def base64_text(text: str = Query(..., max_length=MAX_TEXT), mode: str = "encode
         try:
             return {"result": base64.b64decode(text, validate=True).decode()}
         except (binascii.Error, UnicodeDecodeError):
-            raise HTTPException(400, "input is not valid base64 text")
+            raise HTTPException(400, "input is not valid base64 text") from None
     raise HTTPException(400, "mode must be 'encode' or 'decode'")
 
 
@@ -414,7 +429,9 @@ def json_format(body: JsonIn):
     try:
         parsed = json.loads(body.text)
     except json.JSONDecodeError as exc:
-        raise HTTPException(400, f"invalid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})")
+        raise HTTPException(
+            400, f"invalid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})"
+        ) from None
     return {"valid": True, "pretty": json.dumps(parsed, indent=2, sort_keys=False)}
 
 
@@ -423,7 +440,7 @@ def _b64url_json(segment: str) -> dict:
     try:
         value = json.loads(base64.urlsafe_b64decode(padded))
     except (binascii.Error, ValueError, UnicodeDecodeError):
-        raise HTTPException(400, "token segment is not valid base64url JSON")
+        raise HTTPException(400, "token segment is not valid base64url JSON") from None
     if not isinstance(value, dict):
         raise HTTPException(400, "token segment is not a JSON object")
     return value
@@ -471,7 +488,7 @@ if UPSTREAM_URL:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError:
-            raise HTTPException(502, "upstream service unavailable")
+            raise HTTPException(502, "upstream service unavailable") from None
 
 
 # --------------------------------------------------------------------------
